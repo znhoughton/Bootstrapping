@@ -1,0 +1,413 @@
+---
+title: "Bootstrapping Tutorial"
+author: "Zach Houghton"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(boot)
+library(resample)
+library(gridExtra)
+```
+
+# Bootstrapping Tutorial 
+
+## Acknowledgements:
+
+Thank you to Masoud and Harvey for an interesting discussion/debate regarding limitations and potential criticisms to address.
+
+## What is bootstrapping?
+
+Bootstrapping (in this context) is a method of sampling to estimate confidence intervals.
+
+The way we can bootstrap confidence intervals is fairly straight forward. We can follow the below steps:
+
+-   Sample (with replacement) from the dataset.
+
+-   Calculate sample statistic (usually we care about the means).
+
+-   Repeat a large number of times.
+
+-   If we want the 95% CI, we can order the samples of means in order from smallest to largest and get the 2.5th and 97.5th percentiles. This is the lower and upper CI.
+
+Now that we've listed the steps, let's actually implement them.
+
+## Dataset
+
+For this tutorial we'll use a fairly classic Psycholinguistics paradigm: Lexical Decision Task. We'll use the dataset from here: <https://journals.sagepub.com/doi/10.1080/17470218.2014.984730#supplementary-materials>.
+
+The dataset contains the results from 20 dutch speakers who completed a lexical decision task. Specifically, the columns of interest are RT (reaction time) and CELEX_form_freq (Frequency).
+
+```{r message=FALSE, warning=FALSE}
+dataset = read_table('baldey.txt')
+
+head(dataset, 5)
+```
+
+For this dataset, we care primarily about the following columns: subject, RT, and CELEX_form_freq, but there are a lot of interesting columns to check out on your own time if you're interested.
+
+```{r}
+dataset = dataset %>%
+  select(subject, RT, CELEX_form_freq)
+
+head(dataset, 5)
+```
+
+### Sampling Function
+
+If we just cared about average reaction time, it would be pretty easy to compute confidence intervals. We would just sample with replacement a large number of times and calculate the mean.
+
+```{r}
+sampling_function = function(data, n_samples) {
+  
+  entire_sampled = setNames(data.frame(matrix(ncol = 3, nrow = 0)), c('factory', 'mean', 'n')) #empty dataframe
+  
+  for(i in 1:n_samples) {
+    
+  data_sample = slice_sample(data, prop = 1, replace = TRUE) #sample rows with replacement from the dataset
+    
+  data_sample = data_sample %>%
+    summarize(mean = mean(RT), n = n())
+  
+  entire_sampled = entire_sampled %>%
+    rbind(data_sample)
+  
+  }
+  return(entire_sampled)
+}
+  
+```
+
+```{r}
+RT_sampled = sampling_function(dataset, 1000)
+
+quantile(RT_sampled$mean, probs = c(0.025, 0.975))
+
+
+```
+
+For reference, let's compare this to a popular sampling library in R:
+
+```{r}
+mean_function = function(x, d) {
+  return(colMeans(x[d,]))
+}
+
+#boot library
+
+b = boot(data=dataset[,2:3], statistic=mean_function, R=1000)
+
+quantile(b[[2]][,1], probs = c(0.025, 0.975))
+
+```
+
+We'll talk more about the boot library later.
+
+### Bootstrapping a relationship between two variables
+
+More often than not, however, for this type of data we don't want to calculate the CI for RT, but rather we care about the CIs for the relationship between RT and Frequency. That is, the CI for RT \~ Frequency. This is actually not that difficult either: we do the same thing, but calculate the slope instead of the means.
+
+```{r}
+sampling_function_slopes = function(data, n_samples) {
+  
+  entire_sampled = setNames(data.frame(matrix(ncol = 3, nrow = 0)), c('factory', 'mean', 'n')) #empty dataframe
+  
+  for(i in 1:n_samples) {
+    
+  data_sample = slice_sample(data, prop = 1, replace = TRUE) #sample rows with replacement from the dataset
+    
+  data_sample = data_sample %>%
+    summarize(intercept = lm(RT ~ CELEX_form_freq)$coefficient[1], coeff = lm(RT ~ CELEX_form_freq)$coefficient[2], n = n())
+  
+  entire_sampled = entire_sampled %>%
+    rbind(data_sample)
+  
+  }
+  return(entire_sampled)
+}
+```
+
+Now we examine the CIs:
+
+```{r}
+sampled_slopes = sampling_function_slopes(dataset, 1000)
+
+quantile(sampled_slopes$intercept, probs = c(0.025, 0.975))
+quantile(sampled_slopes$coeff, probs = c(0.025, 0.975))
+
+```
+
+And again let's compare to the boot library:
+
+```{r}
+#boot library
+
+b = boot(data=dataset[,2:3], statistic = function(d,i) lm (RT ~ CELEX_form_freq, d[i,])$coefficients, R=1000) #to compare to sampling library
+
+quantile(b[[2]][,1], probs = c(0.025, 0.975))
+quantile(b[[2]][,2], probs = c(0.025, 0.975))
+
+```
+
+## Potential Questions
+
+-   Wouldn't it be more accurate to sample by-subject instead of sampling the entire dataframe?
+
+This is a good question, especially if there are uneven observations across subjects. That is, if some subjects provide more data than others, the data will be biased towards them. In situations like this, should we sample by-subject instead of sampling the entire dataframe?
+
+The answer is: it doesn't really matter. The reason is that as we sample across a large enough samples, the influence of a single subject evens out.
+
+We can demonstrate this with two factories that make dice, with slightly different weightings (you can think of the factories as subjects). The first factory will be weighted evenly, the second factory will be weighted towards 1.
+
+```{r}
+number_of_rolls_factory1 = 20
+number_of_rolls_factory2 = 80
+probs = c(2/6, rep(4/6/5, times = 5)) #probabilities weighted towards 1
+factory = tibble(factory = c(rep(1, each = number_of_rolls_factory1), rep(2, each = number_of_rolls_factory2))) %>%
+  mutate(roll = c(sample(1:6, size = number_of_rolls_factory1, replace = TRUE), sample(1:6, size = number_of_rolls_factory2, replace = TRUE, prob = probs)))  #20 fair rolls, 80 weighted rolls.
+
+```
+
+Now let's see if sampling by-subject (or rather, by-subject) results in different confidence intervals than sampling from the dataset with replacement.
+
+```{r}
+entire_sampled = setNames(data.frame(matrix(ncol = 3, nrow = 0)), c('factory', 'mean', 'n')) #empty dataframe
+
+by_factory_sampled = setNames(data.frame(matrix(ncol = 3, nrow = 0)), c('factory', 'mean', 'n'))
+
+sampling_dataset = function(n_samples) { #sample directly from dataset
+  
+  for(i in 1:n_samples) {
+    
+  data_sample = slice_sample(factory, prop = 1, replace = TRUE)
+    
+  data_sample = data_sample %>%
+    summarize(mean = mean(roll), n = n())
+  
+  entire_sampled = entire_sampled %>%
+    rbind(data_sample)
+  
+  }
+  return(entire_sampled)
+}
+
+###now let's create a function to sample by-subject, or in this case, by-factory
+sampling_by_subject = function(n_samples) { #sample by-subject
+
+  
+  for(i in 1:n_samples) {
+    
+    data_sample_factory = setNames(data.frame(matrix(ncol = 2, nrow = 0)), c('factory', 'roll')) 
+      
+    for(i in 1:length(unique(factory$factory))) { #sample by-subject
+        
+    data_sample_factory = data_sample_factory %>% 
+      rbind(slice_sample(filter(factory, factory==i), n = sum(factory$factory==i), replace = TRUE))
+    
+      }
+    
+   data_sample = data_sample_factory %>%
+     summarize(mean = mean(roll), n = n())
+   
+   by_factory_sampled = by_factory_sampled %>%
+     rbind(data_sample)
+  }
+  return(by_factory_sampled)
+}
+```
+
+Now let's test these functions:
+
+```{r message=FALSE, warning=FALSE}
+entire_dataset = sampling_dataset(1000)
+by_factory = sampling_by_subject(1000)
+
+entire_dataset_means = entire_dataset %>%
+  summarize(mean = mean(mean))
+
+by_factory_means = by_factory %>%
+  summarize(mean = mean(mean))
+
+grand_mean_entire = entire_dataset %>%
+  summarize(mean = mean(mean))
+
+grand_mean_by_factory = by_factory %>%
+  summarize(mean = mean(mean))
+
+entire_dataset_means
+by_factory_means
+grand_mean_entire
+grand_mean_by_factory
+
+
+```
+
+Are the Confidence Intervals the same, too, though?
+
+```{r}
+quantile(entire_dataset$mean, probs = c(0.025, 0.975))
+
+quantile(by_factory$mean, probs = c(0.025, 0.975))
+```
+
+Now one possible criticism is that the previous method of sampling by-subject samples each subject proportional to how many datapoints that subject contributes, but one last method which surprisingly yields approximately the same results is if we sample by-subject evenly per subject:
+
+```{r}
+sampling_by_subject_evenly = function(n_samples) { #sample by-subject evenly
+
+  
+  for(i in 1:n_samples) {
+    
+    data_sample_factory = setNames(data.frame(matrix(ncol = 2, nrow = 0)), c('factory', 'roll')) 
+      
+    for(i in 1:length(unique(factory$factory))) { #sample by-subject
+        
+    data_sample_factory = data_sample_factory %>% 
+      rbind(slice_sample(filter(factory, factory==i), n = length(factory$factory) / length(unique(factory$factory)), replace = TRUE))
+    
+      }
+    
+   data_sample = data_sample_factory %>%
+     summarize(mean = mean(roll), n = n())
+   
+   by_factory_sampled = by_factory_sampled %>%
+     rbind(data_sample)
+  }
+  return(by_factory_sampled)
+}
+```
+
+Let's sample now:
+
+```{r}
+evenly_sampled = sampling_by_subject_evenly(1000)
+
+by_factory_means_evenly = evenly_sampled %>%
+  summarize(mean = mean(mean))
+
+
+grand_mean_evenly = evenly_sampled %>%
+  summarize(mean = mean(mean))
+
+entire_dataset_means
+by_factory_means_evenly 
+grand_mean_entire
+grand_mean_evenly
+
+```
+
+Again, though, are the CIs the same?
+
+```{r}
+quantile(entire_dataset$mean, probs = c(0.025, 0.975))
+
+quantile(by_factory$mean, probs = c(0.025, 0.975))
+
+quantile(evenly_sampled$mean, probs = c(0.025, 0.975))
+```
+
+## Not reinventing the wheel: Boot Library
+
+The boot library makes our lives a lot easier, since it does most of the work for us. What we need to give it is a) our dataset and b) the statistic we want to compute. For example, if we want to compute the mean we can use the following function:
+
+```{r}
+mean_function = function(x, d) {
+  return(colMeans(x[d,]))
+}
+
+#if you need the slope, you can use:
+#function(d,i) {
+#return(lm (RT ~ CELEX_form_freq, d[i,])$coefficients[2]
+#}
+#also a good blog post on the lm function: https://pythonandr.com/2019/11/12/linear-algebra-behind-the-lm-function-in-r/
+
+b = boot(data=factory, statistic=mean_function, R=1000)
+b2 = bootstrap(data = factory$roll, mean, 1000)
+
+boot.ci(b, index=2)
+
+
+quantile(entire_dataset$mean, probs = c(0.025, 0.975))
+quantile(evenly_sampled$mean, probs = c(0.025, 0.975))
+quantile(by_factory$mean, probs = c(0.025, 0.975))
+
+quantile(b[[2]][,2], probs = c(0.025, 0.975))
+CI.percentile (b2, probs = c (0.025, 0.975))
+```
+
+The process behind the scenes is the same as what we wrote above, but it's much easier and faster to use the boot process, since it is also faster.
+
+## Limitations
+
+The most obvious limitation is that bootstrapping relies on the assumption that your sample is representative of the population. If the sample distribution is small, or distinctly different from the population, bootstrapping will not yield accurate results.
+
+## Plotting
+
+Let's briefly plot a scatterplot graph of RT \~ Frequency for the above bootstrapped confidence intervals:
+
+```{r}
+#plot with automatically calculated SE shading
+plot1 = ggplot(data = dataset, aes(x= CELEX_form_freq, y = RT)) + 
+         geom_point() +
+         geom_smooth(method = lm, se = TRUE) +
+         theme_bw()
+
+#plot with bootstrapped CI shading
+min_intercept = quantile(sampled_slopes$intercept, probs = c(0.025, 0.975))[[1]]
+max_intercept = quantile(sampled_slopes$intercept, probs = c(0.025, 0.975))[[2]]
+
+min_slope = quantile(sampled_slopes$coeff, probs = c(0.025, 0.975))[[1]]
+max_slope = quantile(sampled_slopes$coeff, probs = c(0.025, 0.975))[[2]]
+
+dataset = dataset %>%
+  mutate(lower_ci = min_intercept + min_slope * CELEX_form_freq) %>%
+  mutate(upper_ci = max_intercept + max_slope * CELEX_form_freq)
+
+plot2 = ggplot(data = dataset, aes(x= CELEX_form_freq, y = RT)) + 
+         geom_point() +
+         geom_smooth(method = lm, se = FALSE) +
+          geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), fill = "blue", alpha = .5) +
+         theme_bw()
+         
+plot1
+plot2
+```
+
+Side-by-side:
+
+```{r}
+
+grid.arrange(plot1, plot2, nrow = 1)
+```
+
+```{r}
+plot3 = ggplot(data = dataset, aes(x= CELEX_form_freq, y = RT)) + 
+         geom_point() +
+         geom_smooth(method = lm, se = TRUE, fill = 'red') +
+          geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), fill = "blue", alpha = .1) +
+         theme_bw()
+
+grid.arrange(plot2, plot3)
+```
+
+## Future Directions
+
+Some directions that weren't explored in this tutorial are presented below.
+
+Firstly, a direct comparison between the bootstrapped confidence intervals and the traditionally estimated confidence intervals would be useful to demonstrate situations where bootstrapping may be advantageous over traditionally estimated CIs or vice versa.
+
+Second, comparing both bootstrapped CIs and traditionally estimated CIs to a distribution with known parameters would further demonstrate where bootstrapping exceeds/falls short.
+
+## Further Reading
+
+<https://data-flair.training/blogs/bootstrapping-in-r/>
+
+<https://cran.r-project.org/web/packages/boot/boot.pdf>
+
+<https://pythonandr.com/2019/11/12/linear-algebra-behind-the-lm-function-in-r/>
