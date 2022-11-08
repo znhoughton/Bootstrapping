@@ -256,62 +256,6 @@ quantile(entire_dataset$mean, probs = c(0.025, 0.975))
 quantile(by_factory$mean, probs = c(0.025, 0.975))
 ```
 
-Now one possible criticism is that the previous method of sampling by-subject samples each subject proportional to how many datapoints that subject contributes, but one last method which surprisingly yields approximately the same results is if we sample by-subject evenly per subject:
-
-```{r}
-sampling_by_subject_evenly = function(n_samples) { #sample by-subject evenly
-
-  
-  for(i in 1:n_samples) {
-    
-    data_sample_factory = setNames(data.frame(matrix(ncol = 2, nrow = 0)), c('factory', 'roll')) 
-      
-    for(i in 1:length(unique(factory$factory))) { #sample by-subject
-        
-    data_sample_factory = data_sample_factory %>% 
-      rbind(slice_sample(filter(factory, factory==i), n = length(factory$factory) / length(unique(factory$factory)), replace = TRUE))
-    
-      }
-    
-   data_sample = data_sample_factory %>%
-     summarize(mean = mean(roll), n = n())
-   
-   by_factory_sampled = by_factory_sampled %>%
-     rbind(data_sample)
-  }
-  return(by_factory_sampled)
-}
-```
-
-Let's sample now:
-
-```{r}
-evenly_sampled = sampling_by_subject_evenly(1000)
-
-by_factory_means_evenly = evenly_sampled %>%
-  summarize(mean = mean(mean))
-
-
-grand_mean_evenly = evenly_sampled %>%
-  summarize(mean = mean(mean))
-
-entire_dataset_means
-by_factory_means_evenly 
-grand_mean_entire
-grand_mean_evenly
-
-```
-
-Again, though, are the CIs the same?
-
-```{r}
-quantile(entire_dataset$mean, probs = c(0.025, 0.975))
-
-quantile(by_factory$mean, probs = c(0.025, 0.975))
-
-quantile(evenly_sampled$mean, probs = c(0.025, 0.975))
-```
-
 ## Not reinventing the wheel: Boot Library
 
 The boot library makes our lives a lot easier, since it does most of the work for us. What we need to give it is a) our dataset and b) the statistic we want to compute. For example, if we want to compute the mean we can use the following function:
