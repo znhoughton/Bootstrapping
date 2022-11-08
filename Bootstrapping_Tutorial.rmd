@@ -278,7 +278,6 @@ boot.ci(b, index=2)
 
 
 quantile(entire_dataset$mean, probs = c(0.025, 0.975))
-quantile(evenly_sampled$mean, probs = c(0.025, 0.975))
 quantile(by_factory$mean, probs = c(0.025, 0.975))
 
 quantile(b[[2]][,2], probs = c(0.025, 0.975))
